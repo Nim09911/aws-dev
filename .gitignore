@@ -1,0 +1,14 @@
+node_modules/
+**/dist/
+.env
+**/.env
+*.tsbuildinfo
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+terraform.tfvars
+*.auto.tfvars
+task-definition.json
+artifacts/

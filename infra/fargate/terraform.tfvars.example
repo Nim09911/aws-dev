@@ -1,0 +1,16 @@
+aws_region                  = "us-east-1"
+name_prefix                 = "aws-dev-nj"
+owner                       = "nj"
+expires_at                  = "2026-08-17T18:00:00Z"
+ingress_cidr                = "198.51.100.24/32"
+image_tag                   = "0000000000000000000000000000000000000000"
+desired_count               = 0
+cors_allowed_origins        = ["https://learner.example"]
+github_repository           = "YOUR_GITHUB_OWNER/YOUR_REPOSITORY"
+github_environment          = "ecs-dev"
+github_oidc_provider_arn    = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+
+# These values are parameter names only. Seed their values with scripts/seed-ecs-parameters.sh.
+jwt_public_key_parameter_name = "/aws-developer-course/ecs/dev/jwt-public-key-base64"
+jwt_issuer_parameter_name     = "/aws-developer-course/ecs/dev/jwt-issuer"
+jwt_audience_parameter_name   = "/aws-developer-course/ecs/dev/jwt-audience"

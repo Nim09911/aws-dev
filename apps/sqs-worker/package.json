@@ -1,0 +1,14 @@
+{
+  "name": "@aws-course/sqs-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@aws-course/contracts": "^0.0.0",
+    "pino": "^10.3.1"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.162",
+    "vitest": "^4.1.10"
+  }
+}

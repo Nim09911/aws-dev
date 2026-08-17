@@ -1,0 +1,19 @@
+{
+  "name": "@aws-course/lambda-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@aws-course/contracts": "^0.0.0",
+    "@aws-sdk/client-sqs": "^3.1111.0",
+    "@aws-sdk/client-ssm": "^3.1111.0",
+    "jose": "^6.2.9",
+    "pino": "^10.3.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.162",
+    "@types/node": "^26.2.0",
+    "vitest": "^4.1.10"
+  }
+}

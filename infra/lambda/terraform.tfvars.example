@@ -1,0 +1,13 @@
+aws_region      = "us-east-1"
+name_prefix     = "replace-me"
+owner           = "replace-me"
+expires_at      = "2026-08-17T18:00:00Z"
+artifact_path = "/absolute/path/to/aws-dev/artifacts/lambda-api.zip"
+
+cors_allowed_origins = ["https://learner.example"]
+
+jwt_parameter_base_path    = "/aws-developer-course/lambda"
+parameter_cache_ttl_seconds = 30
+
+github_repository       = "OWNER/REPOSITORY"
+github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"

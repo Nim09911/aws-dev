@@ -1,0 +1,167 @@
+name: Deploy Lambda API
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_stage:
+        description: Alias to promote after the artifact is verified
+        required: true
+        type: choice
+        options: [dev, stage]
+        default: dev
+  push:
+    branches: [main]
+    paths:
+      - "apps/lambda-api/**"
+      - "packages/contracts/**"
+      - "scripts/package-lambda.sh"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig*.json"
+      - ".github/workflows/deploy-lambda.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: lambda-api-deploy
+  cancel-in-progress: false
+
+jobs:
+  test-package-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: lambda-deploy
+    env:
+      TARGET_STAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.target_stage || 'dev' }}
+      ARTIFACT_PATH: artifacts/lambda-api.zip
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Test, lint, type-check, and build
+        run: npm run check
+      - name: Build deterministic Lambda artifact
+        run: ./scripts/package-lambda.sh "$ARTIFACT_PATH"
+      - name: Record immutable artifact identity
+        id: artifact
+        run: |
+          test "$TARGET_STAGE" = "dev" || test "$TARGET_STAGE" = "stage"
+          code_sha256="$(openssl dgst -sha256 -binary "$ARTIFACT_PATH" | openssl base64 -A)"
+          echo "code_sha256=$code_sha256" >> "$GITHUB_OUTPUT"
+          echo "source_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Artifact source=$GITHUB_SHA CodeSha256=$code_sha256"
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-lambda-${{ github.run_id }}
+
+      - name: Reuse or publish immutable function version
+        id: version
+        env:
+          FUNCTION_NAME: ${{ vars.LAMBDA_FUNCTION_NAME }}
+          CODE_SHA256: ${{ steps.artifact.outputs.code_sha256 }}
+        run: |
+          config_query='{runtime:Runtime,role:Role,handler:Handler,timeout:Timeout,memory:MemorySize,environment:Environment.Variables,architectures:Architectures,ephemeral:EphemeralStorage.Size,layers:Layers[*].Arn,logging:LoggingConfig,tracing:TracingConfig.Mode,vpc:VpcConfig.VpcId}'
+          current_config_hash="$(
+            aws lambda get-function-configuration \
+              --function-name "$FUNCTION_NAME" \
+              --query "$config_query" \
+              --output json |
+              jq -S -c . |
+              sha256sum |
+              cut -d ' ' -f 1
+          )"
+          mapfile -t candidates < <(
+            aws lambda list-versions-by-function \
+              --function-name "$FUNCTION_NAME" \
+              --output json |
+              jq -r --arg hash "$CODE_SHA256" \
+                '[.Versions[] | select(.Version != "$LATEST" and .CodeSha256 == $hash) | (.Version | tonumber)] | sort | reverse | .[]'
+          )"
+          version=""
+          for candidate in "${candidates[@]}"; do
+            candidate_config_hash="$(
+              aws lambda get-function-configuration \
+                --function-name "$FUNCTION_NAME" \
+                --qualifier "$candidate" \
+                --query "$config_query" \
+                --output json |
+                jq -S -c . |
+                sha256sum |
+                cut -d ' ' -f 1
+            )"
+            if [[ "$candidate_config_hash" == "$current_config_hash" ]]; then
+              version="$candidate"
+              break
+            fi
+          done
+          if [[ -z "$version" ]]; then
+            version="$(
+              aws lambda update-function-code \
+                --function-name "$FUNCTION_NAME" \
+                --zip-file "fileb://$ARTIFACT_PATH" \
+                --publish \
+                --query Version \
+                --output text
+            )"
+            aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME"
+          else
+            echo "Reusing function version $version with matching code and runtime configuration."
+          fi
+          test "$version" != '$LATEST'
+          echo "function_version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Promote only the requested alias
+        env:
+          FUNCTION_NAME: ${{ vars.LAMBDA_FUNCTION_NAME }}
+          VERSION: ${{ steps.version.outputs.function_version }}
+        run: |
+          current="$(
+            aws lambda get-alias \
+              --function-name "$FUNCTION_NAME" \
+              --name "$TARGET_STAGE" \
+              --query FunctionVersion \
+              --output text
+          )"
+          if [[ "$current" == "$VERSION" ]]; then
+            echo "$TARGET_STAGE already points to version $VERSION."
+          else
+            aws lambda update-alias \
+              --function-name "$FUNCTION_NAME" \
+              --name "$TARGET_STAGE" \
+              --function-version "$VERSION" >/dev/null
+          fi
+
+      - name: Verify exact post-update status
+        env:
+          FUNCTION_NAME: ${{ vars.LAMBDA_FUNCTION_NAME }}
+          VERSION: ${{ steps.version.outputs.function_version }}
+          CODE_SHA256: ${{ steps.artifact.outputs.code_sha256 }}
+        run: |
+          alias_version="$(
+            aws lambda get-alias \
+              --function-name "$FUNCTION_NAME" \
+              --name "$TARGET_STAGE" \
+              --query FunctionVersion \
+              --output text
+          )"
+          test "$alias_version" = "$VERSION"
+          read -r state update_status deployed_hash < <(
+            aws lambda get-function-configuration \
+              --function-name "$FUNCTION_NAME" \
+              --qualifier "$TARGET_STAGE" \
+              --query '[State,LastUpdateStatus,CodeSha256]' \
+              --output text
+          )
+          test "$state" = "Active"
+          test "$update_status" = "Successful"
+          test "$deployed_hash" = "$CODE_SHA256"
+          echo "Verified stage=$TARGET_STAGE version=$VERSION source=$GITHUB_SHA CodeSha256=$CODE_SHA256"
